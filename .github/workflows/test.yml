@@ -1,4 +1,4 @@
-```yaml
+
 name: Download and Upload to Telegram
 
 on:
@@ -277,4 +277,4 @@ jobs:
           echo "===== Telegram API Log ====="
 
           cat telegram-api.log || true
-```
+
