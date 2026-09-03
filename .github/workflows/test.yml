@@ -1,4 +1,4 @@
-name: Download Video
+name: Telegram Upload Test
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ on:
         type: string
 
 jobs:
-  download:
+  upload:
     runs-on: ubuntu-latest
 
     steps:
@@ -26,7 +26,38 @@ jobs:
             -o "video.%(ext)s" \
             "${{ inputs.url }}"
 
-      - name: Check downloaded file
+      - name: Check file
         run: |
-          ls -lh
-          du -sh .
+          ls -lh video.mp4
+          du -h video.mp4
+
+      - name: Download Telegram Bot API Server
+        run: |
+          wget -q https://github.com/tdlib/telegram-bot-api/releases/latest/download/telegram-bot-api.tar.gz
+          tar -xzf telegram-bot-api.tar.gz
+
+      - name: Start Local Bot API
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          mkdir -p telegram-data
+
+          ./telegram-bot-api/bin/telegram-bot-api \
+            --api-id="${TELEGRAM_API_ID}" \
+            --api-hash="${TELEGRAM_API_HASH}" \
+            --local \
+            --dir="$PWD/telegram-data" \
+            > telegram-api.log 2>&1 &
+
+          sleep 5
+
+          cat telegram-api.log
+
+      - name: Upload to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          curl -v \
+            -F "chat_id=@${TELEGRAM_BOT_TOKEN}" \
+            http://127.0.0.1:8081/bot${TELEGRAM_BOT_TOKEN}/getMe
