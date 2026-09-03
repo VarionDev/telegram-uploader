@@ -1,63 +1,79 @@
-name: Telegram Upload Test
+name: Test Telegram Local Bot API
 
 on:
   workflow_dispatch:
-    inputs:
-      url:
-        description: "Video URL"
-        required: true
-        type: string
 
 jobs:
-  upload:
+  test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install yt-dlp
-        run: |
-          python3 -m pip install --upgrade yt-dlp
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Download video
+      - name: Install dependencies
         run: |
-          yt-dlp \
-            --no-playlist \
-            -f "bv*+ba/b" \
-            --merge-output-format mp4 \
-            -o "video.%(ext)s" \
-            "${{ inputs.url }}"
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            cmake \
+            gperf \
+            build-essential \
+            zlib1g-dev \
+            libssl-dev
 
-      - name: Check file
+      - name: Build Telegram Bot API
         run: |
-          ls -lh video.mp4
-          du -h video.mp4
+          git clone --recursive https://github.com/tdlib/telegram-bot-api.git
 
-      - name: Download Telegram Bot API Server
-        run: |
-          wget -q https://github.com/tdlib/telegram-bot-api/releases/latest/download/telegram-bot-api.tar.gz
-          tar -xzf telegram-bot-api.tar.gz
+          cmake \
+            -S telegram-bot-api \
+            -B telegram-bot-api/build \
+            -DCMAKE_BUILD_TYPE=Release
 
-      - name: Start Local Bot API
+          cmake \
+            --build telegram-bot-api/build \
+            --target telegram-bot-api \
+            -j2
+
+      - name: Start Telegram Local Bot API
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: |
           mkdir -p telegram-data
 
-          ./telegram-bot-api/bin/telegram-bot-api \
-            --api-id="${TELEGRAM_API_ID}" \
-            --api-hash="${TELEGRAM_API_HASH}" \
+          ./telegram-bot-api/build/telegram-bot-api \
+            --api-id="$TELEGRAM_API_ID" \
+            --api-hash="$TELEGRAM_API_HASH" \
             --local \
             --dir="$PWD/telegram-data" \
+            --http-port=8081 \
             > telegram-api.log 2>&1 &
 
-          sleep 5
+          echo $! > telegram-api.pid
 
-          cat telegram-api.log
+          echo "Waiting for Telegram Bot API..."
 
-      - name: Upload to Telegram
+          for i in {1..30}; do
+            if curl -s http://127.0.0.1:8081/ > /dev/null; then
+              echo "Telegram Local Bot API is running!"
+              break
+            fi
+
+            sleep 2
+          done
+
+      - name: Test Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          curl -v \
-            -F "chat_id=@${TELEGRAM_BOT_TOKEN}" \
-            http://127.0.0.1:8081/bot${TELEGRAM_BOT_TOKEN}/getMe
+          echo "Testing bot..."
+
+          curl -sS \
+            "http://127.0.0.1:8081/bot${TELEGRAM_BOT_TOKEN}/getMe"
+
+      - name: Show Telegram API log
+        if: always()
+        run: |
+          cat telegram-api.log || true
