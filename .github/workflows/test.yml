@@ -1,10 +1,15 @@
-name: Test Telegram Local Bot API
+name: Download and Upload to Telegram
 
 on:
   workflow_dispatch:
+    inputs:
+      url:
+        description: "Direct video URL"
+        required: true
+        type: string
 
 jobs:
-  test:
+  upload:
     runs-on: ubuntu-latest
 
     steps:
@@ -20,7 +25,8 @@ jobs:
             gperf \
             build-essential \
             zlib1g-dev \
-            libssl-dev
+            libssl-dev \
+            curl
 
       - name: Build Telegram Bot API
         run: |
@@ -51,8 +57,6 @@ jobs:
             --http-port=8081 \
             > telegram-api.log 2>&1 &
 
-          echo $! > telegram-api.pid
-
           echo "Waiting for Telegram Bot API..."
 
           for i in {1..30}; do
@@ -64,16 +68,33 @@ jobs:
             sleep 2
           done
 
-      - name: Test Bot
+      - name: Download video
+        run: |
+          wget \
+            --progress=dot:giga \
+            -O video.mp4 \
+            "${{ inputs.url }}"
+
+          ls -lh video.mp4
+
+      - name: Upload to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
         run: |
-          echo "Testing bot..."
+          echo "Uploading to Telegram..."
 
           curl -sS \
-            "http://127.0.0.1:8081/bot${TELEGRAM_BOT_TOKEN}/getMe"
+            -F "chat_id=${TELEGRAM_CHANNEL_ID}" \
+            -F "document=@video.mp4" \
+            "http://127.0.0.1:8081/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+            | tee telegram-result.json
 
-      - name: Show Telegram API log
+      - name: Show Telegram result
         if: always()
         run: |
+          echo "===== Telegram Result ====="
+          cat telegram-result.json || true
+
+          echo "===== Telegram API Log ====="
           cat telegram-api.log || true
