@@ -1,17 +1,15 @@
-name: Test Runner
+name: Download Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  download:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Show system information
+      - name: Check system
         run: |
-          echo "Hello from GitHub Actions!"
-          echo ""
           echo "CPU:"
           nproc
           echo ""
@@ -20,3 +18,21 @@ jobs:
           echo ""
           echo "Disk:"
           df -h
+
+      - name: Install yt-dlp
+        run: |
+          python3 -m pip install --upgrade yt-dlp
+
+      - name: Download video
+        run: |
+          yt-dlp \
+            --no-playlist \
+            -f "bv*+ba/b" \
+            --merge-output-format mp4 \
+            -o "video.%(ext)s" \
+            "https://cdn.maktabkhooneh.org/videos/7409694809949324.mp4?expire=1788466970&token=10c1cac70255dad3dee049abfa835c87&md5=EMHKxwJV2tPe4Emr-oNchw=="
+
+      - name: Check downloaded file
+        run: |
+          ls -lh
+          du -sh .
