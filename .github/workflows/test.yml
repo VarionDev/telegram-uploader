@@ -16,9 +16,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # -----------------------------
+      # Cache Telegram Bot API
+      # -----------------------------
+      - name: Restore Telegram Bot API cache
+        id: telegram-cache
+        uses: actions/cache@v4
+        with:
+          path: telegram-bot-api/build/telegram-bot-api
+          key: telegram-bot-api-${{ runner.os }}-v1
+
+      # -----------------------------
+      # Build Telegram Bot API
+      # فقط اگر Cache موجود نباشد
+      # -----------------------------
       - name: Install dependencies
+        if: steps.telegram-cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             git \
             cmake \
@@ -29,8 +45,16 @@ jobs:
             curl
 
       - name: Build Telegram Bot API
+        if: steps.telegram-cache.outputs.cache-hit != 'true'
         run: |
-          git clone --recursive https://github.com/tdlib/telegram-bot-api.git
+          set -e
+
+          echo "Downloading Telegram Bot API source..."
+
+          git clone --recursive \
+            https://github.com/tdlib/telegram-bot-api.git
+
+          echo "Building..."
 
           cmake \
             -S telegram-bot-api \
@@ -42,12 +66,34 @@ jobs:
             --target telegram-bot-api \
             -j2
 
+          echo "Build completed."
+
+      # -----------------------------
+      # اگر Cache وجود داشت، dependencies
+      # برای curl و runtime
+      # -----------------------------
+      - name: Install runtime dependencies
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            curl \
+            libssl3 \
+            zlib1g
+
+      # -----------------------------
+      # Start Local Telegram Bot API
+      # -----------------------------
       - name: Start Telegram Local Bot API
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: |
+          set -e
+
           mkdir -p telegram-data
+
+          echo "Starting Telegram Bot API..."
 
           ./telegram-bot-api/build/telegram-bot-api \
             --api-id="$TELEGRAM_API_ID" \
@@ -57,44 +103,127 @@ jobs:
             --http-port=8081 \
             > telegram-api.log 2>&1 &
 
+          echo $! > telegram-api.pid
+
           echo "Waiting for Telegram Bot API..."
 
           for i in {1..30}; do
-            if curl -s http://127.0.0.1:8081/ > /dev/null; then
-              echo "Telegram Local Bot API is running!"
-              break
+
+            if curl -s \
+              http://127.0.0.1:8081/ \
+              > /dev/null; then
+
+              echo "Telegram Bot API is ready!"
+              exit 0
+
             fi
 
             sleep 2
+
           done
 
+          echo "Telegram Bot API failed to start."
+
+          cat telegram-api.log
+
+          exit 1
+
+      # -----------------------------
+      # Test Bot
+      # -----------------------------
+      - name: Test Telegram Bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          set -e
+
+          curl --fail-with-body -sS \
+            "http://127.0.0.1:8081/bot${TELEGRAM_BOT_TOKEN}/getMe"
+
+          echo ""
+          echo "Bot is working."
+
+      # -----------------------------
+      # Download Video
+      # -----------------------------
       - name: Download video
         run: |
+          set -e
+
+          echo "Downloading video..."
+
           wget \
             --progress=dot:giga \
-            -O video.mp4 \
+            -O "$GITHUB_WORKSPACE/video.mp4" \
             "${{ inputs.url }}"
 
-          ls -lh video.mp4
+          echo ""
+          echo "Download completed."
 
+          ls -lh "$GITHUB_WORKSPACE/video.mp4"
+
+      # -----------------------------
+      # Upload to Telegram
+      # -----------------------------
       - name: Upload to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
         run: |
+          set -euo pipefail
+
+          VIDEO="$GITHUB_WORKSPACE/video.mp4"
+
+          echo "Checking video..."
+
+          test -f "$VIDEO"
+
+          ls -lh "$VIDEO"
+
+          echo ""
           echo "Uploading to Telegram..."
 
-          curl -sS \
+          curl \
+            --fail-with-body \
+            -sS \
             -F "chat_id=${TELEGRAM_CHANNEL_ID}" \
-            -F "document=@video.mp4" \
+            -F "document=@${VIDEO}" \
             "http://127.0.0.1:8081/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
             | tee telegram-result.json
 
-      - name: Show Telegram result
+          echo ""
+          echo "Upload request completed."
+
+      # -----------------------------
+      # Check Telegram response
+      # -----------------------------
+      - name: Check upload result
+        run: |
+          set -e
+
+          echo "===== Telegram Result ====="
+
+          cat telegram-result.json
+
+          echo ""
+
+          grep -q '"ok":true' telegram-result.json
+
+          echo "================================"
+          echo "UPLOAD SUCCESSFUL"
+          echo "================================"
+
+      # -----------------------------
+      # Cleanup
+      # -----------------------------
+      - name: Cleanup
         if: always()
         run: |
-          echo "===== Telegram Result ====="
-          cat telegram-result.json || true
+          rm -f "$GITHUB_WORKSPACE/video.mp4"
 
+          echo "Temporary video deleted."
+
+          echo ""
           echo "===== Telegram API Log ====="
+
           cat telegram-api.log || true
